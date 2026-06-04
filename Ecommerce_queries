@@ -1,0 +1,42 @@
+--1.
+
+SELECT 
+    country,
+    COUNT(customer_service_calls) AS user_count ,
+    SUM(customer_service_calls) AS Total_Cutsomer_Service_Calls,
+    CAST(AVG(customer_service_calls) :: Decimal (10,2)) AS Average_calls_per_user
+FROM 
+    ecommerce_customer_churn_dataset
+GROUP BY 
+    country
+ORDER BY 
+    Total_Cutsomer_Service_Calls DESC;
+
+--2.
+SELECT 
+    country,
+    SUM(CASE WHEN customer_service_calls > 5 THEN 1 ELSE 0 END) AS High_friction_users,
+    SUM(CASE WHEN customer_service_calls <= 2 THEN 1 ELSE 0 END) AS Low_friction_users,
+    (SUM(CASE WHEN customer_service_calls > 5 AND churned = 1 THEN 1 ELSE 0 END) * 100.0 
+ / NULLIF(SUM(CASE WHEN customer_service_calls > 5 THEN 1 ELSE 0 END), 0))::DECIMAL(10,2) AS high_friction_churn_rate,
+
+    (SUM(CASE WHEN customer_service_calls <= 2 AND churned = 1 THEN 1 ELSE 0 END) * 100.0 
+ / NULLIF(SUM(CASE WHEN customer_service_calls <= 2 THEN 1 ELSE 0 END), 0))::DECIMAL(10,2) AS low_friction_churn_rate
+FROM
+    ecommerce_customer_churn_dataset
+GROUP BY 
+    country
+ORDER BY 
+    high_friction_churn_rate DESC;
+
+
+SELECT 
+    funnel_stage, 
+    COUNT(*) AS total_users,
+    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS percentage_of_total
+FROM 
+    vw_funnel_analysis
+GROUP BY 
+    funnel_stage
+ORDER BY 
+    funnel_stage ASC;
