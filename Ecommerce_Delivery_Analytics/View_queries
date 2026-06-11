@@ -1,0 +1,140 @@
+CREATE OR REPLACE VIEW vw_complaint_buckets AS
+SELECT
+    order_id,
+    customer_id,
+    platform,
+    product_category,
+    order_value,
+    service_rating,
+    delivery_delay,
+    refund_requested,
+    customer_feedback,
+
+    -- Bucket assignment
+    CASE
+        WHEN customer_feedback IN (
+            'Items missing from order.',
+            'Wrong item delivered.'
+        ) THEN 'Fulfillment Errors'
+
+        WHEN customer_feedback IN (
+            'Very late delivery, not happy.',
+            'Delivery person was rude.'
+        ) THEN 'Delivery Issues'
+
+        WHEN customer_feedback IN (
+            'Not fresh, disappointed.',
+            'Packaging could be better.'
+        ) THEN 'Quality Issues'
+
+        WHEN customer_feedback = 'Horrible experience, never ordering again.'
+        THEN 'General Dissatisfaction'
+
+        ELSE 'Positive Experience'
+    END AS complaint_bucket
+
+FROM ecommerce_delivery_analytics;
+
+--Q1 Revenue Lost per Complaint Bucket
+
+SELECT
+    complaint_bucket,
+    COUNT(order_id)                          AS total_orders,
+    SUM(CASE WHEN refund_requested = 'Yes'
+        THEN order_value ELSE 0 END)         AS revenue_lost,
+    ROUND(AVG(service_rating), 2)            AS avg_rating,
+    ROUND(100.0 * SUM(CASE WHEN refund_requested = 'Yes' THEN 1 ELSE 0 END)
+        / COUNT(order_id), 1)                AS refund_rate_pct
+FROM vw_complaint_buckets
+GROUP BY complaint_bucket
+ORDER BY revenue_lost DESC;
+
+--Q2 Revenue Lost by Platform per Bucket
+
+SELECT
+    platform,
+    complaint_bucket,
+    COUNT(order_id)                          AS total_orders,
+    SUM(CASE WHEN refund_requested = 'Yes'
+        THEN order_value ELSE 0 END)         AS revenue_lost
+FROM vw_complaint_buckets
+WHERE complaint_bucket != 'Positive Experience'
+GROUP BY platform, complaint_bucket
+ORDER BY platform, revenue_lost DESC;
+
+--Q3 Revenue Lost by Product Category
+
+SELECT
+    product_category,
+    complaint_bucket,
+    COUNT(order_id)                          AS total_orders,
+    ROUND(SUM(CASE WHEN refund_requested = 'Yes'
+        THEN order_value ELSE 0 END), 0)     AS revenue_lost
+FROM vw_complaint_buckets
+WHERE complaint_bucket != 'Positive Experience'
+GROUP BY product_category, complaint_bucket
+ORDER BY revenue_lost DESC;
+
+--Q4 Pareto Analysis (Cumulative Revenue Loss)
+
+WITH BucketLoss AS (
+    SELECT
+        complaint_bucket,
+        SUM(CASE WHEN refund_requested = 'Yes'
+            THEN order_value ELSE 0 END) AS revenue_lost
+    FROM vw_complaint_buckets
+    WHERE complaint_bucket != 'Positive Experience'
+    GROUP BY complaint_bucket
+)
+SELECT
+    complaint_bucket,
+    ROUND(revenue_lost, 0)                                              AS revenue_lost,
+    ROUND(SUM(revenue_lost) OVER (ORDER BY revenue_lost DESC), 0)      AS running_total,
+    ROUND(100.0 * SUM(revenue_lost) OVER (ORDER BY revenue_lost DESC)
+        / SUM(revenue_lost) OVER (), 1)                                AS cumulative_pct
+FROM BucketLoss
+ORDER BY revenue_lost DESC;
+
+-- Q5 Refund Abuser Detection
+WITH UserOrderMetrics AS (
+    SELECT 
+        Customer_ID,
+        COUNT(Order_ID) AS total_orders,
+        SUM(CASE WHEN Refund_Requested = 'Yes' THEN 1 ELSE 0 END) AS total_refunds
+    FROM ecommerce_delivery_analytics
+    GROUP BY Customer_ID
+    HAVING COUNT(Order_ID) > 1
+),
+UserRefundRates AS (
+    SELECT 
+        Customer_ID,
+        total_orders,
+        total_refunds,
+        ROUND((100.0 * total_refunds / total_orders), 2) AS user_refund_rate
+    FROM UserOrderMetrics
+)
+SELECT * FROM UserRefundRates
+WHERE user_refund_rate > (
+    SELECT (100.0 * COUNT(CASE WHEN Refund_Requested = 'Yes' THEN 1 END) / COUNT(*))
+    FROM ecommerce_delivery_analytics
+)
+ORDER BY total_refunds DESC, user_refund_rate DESC;
+
+--Q6  Delivery Delay vs Refund Cross-tab
+
+SELECT 
+    delivery_delay, 
+    refund_requested, 
+    COUNT(order_id) AS order_count
+FROM ecommerce_delivery_analytics
+GROUP BY delivery_delay, refund_requested;
+
+--Q7 Feedback Distribution Check (Data Quality)
+
+SELECT
+    customer_feedback,
+    COUNT(order_id) AS total_orders,
+    ROUND(100.0 * COUNT(order_id) / SUM(COUNT(order_id)) OVER(), 1) AS pct_of_total
+FROM ecommerce_delivery_analytics
+GROUP BY customer_feedback
+ORDER BY total_orders DESC;
